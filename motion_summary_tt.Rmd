@@ -86,8 +86,6 @@ settings.check <- dcast(motion_ests, ... ~ source + setting)
 ## Estimating known motion
 
 ```{r cars}
-
-
 truth <- moved %>%
   select(-matches('grad')) %>%
   select(-starts_with('error_')) %>%
@@ -95,28 +93,37 @@ truth <- moved %>%
   select(-matches('_(x|y|z)'))
   
 estimates <- moved %>%
-  gather('estimated', 'estimated_values', matches('_(x|y|z)'), -matches('true')) %>%
-  select(-matches('true')) %>%
+  select(-matches('grad')) %>%
   select(-starts_with('error_')) %>%
-  filter(!str_detect(estimated, 'grad'))
+  select(-starts_with('true_')) %>%
+  gather('estimated', 'estimated_values', matches('_(x|y|z)'))
 ```
 
 
 
-```{r}
+```{r estimated vs real motion plot}
 actually.moved <- subset(motion.check, was_moved)
 
+# join the estimates and the true values
 estimates %>%
-  cbind(select(truth, matches('tru'))) %>%
-  filter(was_moved) 
-
-
-%>%
-  ggplot(., aes(x=true_values, y=estimated_values, color=method, shape=as.factor(percent_motion))) + 
+  bind_cols(select(truth, truth, true_values)) %>%
+  # use only rows where there was actual perturbation
+  filter(was_moved) %>%
+  # get a column for the axis
+  separate(estimated, into=c("motion_type", "axis"), sep="_") %>%
+  
+  # start the ggplot
+  ggplot(
+    aes(x=true_values, 
+        y=estimated_values, 
+        color=method,
+        # we may not need percent motion yet
+        shape=as.factor(percent_motion)
+        )
+    ) +
   geom_point(alpha=0.1) + 
   geom_abline(intercept=0, slope=1) + 
-#  xlim(-3,3) + ylim(-3,3) +
-  facet_grid(motion.type~ axis) +
+  facet_grid(motion_type~ axis) +
   ggtitle("Estimated Motion vs. Ground Truth Motion") +
   theme_minimal()
 
