@@ -102,8 +102,6 @@ estimates <- moved %>%
 
 
 ```{r estimated vs real motion plot}
-actually.moved <- subset(motion.check, was_moved)
-
 # join the estimates and the true values
 estimates %>%
   bind_cols(select(truth, truth, true_values)) %>%
@@ -136,42 +134,86 @@ estimates %>%
 NOTE: We now have 15 and 30% motion. 50% is being run now.
 
 ```{r}
+actually.moved <- subset(motion.check, was_moved)
+
 theme_set(theme_cowplot())
 # Embed the fonts
 
 actually.moved$error <- with(actually.moved, Truth - Estimated)
 comparable <- subset(actually.moved, scheme %in% c('HCP', 'ABCD'))
 
-ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=method)) + 
-  geom_histogram(alpha=0.6, position="identity") +
-  facet_grid(scheme~motion.type, scales = "free_y") +
-  theme_cowplot(12)
+# get the different percentages
+percents <- unique(comparable$percent_motion)
 
-ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=method)) + 
-  geom_histogram(alpha=0.6, position="identity") +
-  facet_grid(scheme~motion.type, scales = "free_y") +
-  theme_cowplot(12)
+# create a list for these
+absolute_error_hists <- vector("list", length = length(percents))
 
-plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+# for each of the percentages make a plot
+for(x in 1:length(percents)){
   
+  ptitle <- paste0("Absolute Error of Motion Correction for ",
+                  percents[x], "% Motion")
+  pl <- comparable %>%
+    # do the percent motion filter here
+    filter(percent_motion==percents[x]) %>%
+    
+    # start the ggplot
+    ggplot(aes(x=error, fill=method)) + 
+    geom_histogram(alpha=0.6, position="identity") +
+    facet_grid(scheme~motion.type, scales = "free_y") +
+    ggtitle(ptitle)
+    theme_cowplot(12)
+  
+  absolute_error_hists[[x]] <- pl
+}
+
+### NOT NEEDED
+# comparable %>%
+#   # do the percent motion filter here
+#   filter(percent_motion==15) %>%
+#   
+#   # start the ggplot
+#   ggplot(aes(x=error, fill=method)) + 
+#   geom_histogram(alpha=0.6, position="identity") +
+#   facet_grid(scheme~motion.type, scales = "free_y") +
+#   theme_cowplot(12) -> ss15
+# 
+# ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=method)) + 
+#   geom_histogram(alpha=0.6, position="identity") +
+#   facet_grid(scheme~motion.type, scales = "free_y") +
+#   theme_cowplot(12)
+
+plot_grid(plotlist = absolute_error_hists, labels = LETTERS[1:length(absolute_error_hists)], label_size = 12)
 
 ```
 
 ```{r}
 comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
 
-ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=scheme)) + 
-  geom_density(alpha=0.6, position="identity") +
-  facet_grid(.~motion.type, scales = "free_y") +
-  theme_cowplot(12)
+# create a list for these
+absolute_error_dens <- vector("list", length = length(percents))
 
-ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=scheme)) + 
-  geom_density(alpha=0.6, position="identity") +
-  facet_grid(.~motion.type, scales = "free_y") +
-  theme_cowplot(12)
+percents <- unique(comparable$percent_motion)
 
-plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+# for each of the percentages make a plot
+for(x in 1:length(percents)){
   
+  ptitle <- paste0("Absolute Error of Motion Correction for ",
+                  percents[x], "% Motion")
+  pl <- comparable %>%
+    # do the percent motion filter here
+    filter(percent_motion==percents[x]) %>%
+    
+    # start the ggplot
+    ggplot(aes(x=error, fill=scheme)) + 
+      geom_density(alpha=0.6, position="identity") +
+      facet_grid(.~motion.type, scales = "free_y") +
+      theme_cowplot(12)
+  
+  absolute_error_dens[[x]] <- pl
+}
+
+plot_grid(plotlist = absolute_error_dens, labels = LETTERS[1:length(absolute_error_dens)], label_size = 12)
 
 ```
 
