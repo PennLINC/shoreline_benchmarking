@@ -1,0 +1,144 @@
+---
+title: "Motion Estimation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Estimating known motion
+
+```{r read_results}
+library(ggplot2)
+library(reshape2)
+
+
+motion_df <- read.csv("data/motion_benchmark.csv")
+qc_df <- read.csv('data/qc_benchmark.csv')
+
+motion_df$was_moved <- !with(motion_df, 
+  (true_trans_z == 0) &
+  (true_trans_y == 0) &
+  (true_trans_z == 0) &
+  (true_rot_x == 0) &
+  (true_rot_y == 0) & 
+  (true_rot_z == 0))
+
+table(motion_df$was_moved)
+
+# Calculate the errors
+for (motion_axis in c("x", "y", "z")){
+  for (motion_type in c("trans", "rot")){
+    est.mov.name <- paste0(motion_type, "_", motion_axis)
+    est.mov <- motion_df[est.mov.name]
+    if (motion_type == "rot"){
+      est.mov <- est.mov * 180 / pi
+      motion_df[est.mov.name] <- est.mov
+    }
+    true.mov <- motion_df[paste0("true_", motion_type, "_", motion_axis)]
+    
+    error.col <- paste("error", motion_type, motion_axis, sep="_")
+    motion_df[error.col] <- true.mov - est.mov
+  }
+}
+
+# Get only the columns for the motion analysis
+motion_columns <- c("bval", "grad_x", "grad_y", "grad_z",
+                    "iternum", "scheme", "method", "setting", "percent_motion", "was_moved",
+                    "error_trans_x", "error_trans_y", "error_trans_z", "error_rot_x", "error_rot_y", "error_rot_z",
+                    "true_trans_x", "true_trans_y", "true_trans_z", "true_rot_x", "true_rot_y", "true_rot_z",
+                    "trans_x", "trans_y", "trans_z", "rot_x", "rot_y", "rot_z", "volnum"
+                    )
+moved <- motion_df[, motion_columns]
+
+
+m.moved <- melt(moved,
+    measure.vars = c("error_trans_x", "error_trans_y", "error_trans_z", "error_rot_x", "error_rot_y", "error_rot_z",
+                     "true_trans_x", "true_trans_y", "true_trans_z", "true_rot_x", "true_rot_y", "true_rot_z",
+                     "trans_x", "trans_y", "trans_z", "rot_x", "rot_y", "rot_z"))
+
+m.moved$motion.type <- 'Translation'
+m.moved$motion.type[grep('rot_', m.moved$variable)] <- 'Rotation'
+table(m.moved$motion.type)
+m.moved$axis <- gsub(".*_([xyz])$", '\\1', m.moved$variable)
+m.moved$source <- "Estimated"
+m.moved$source[grep('true', m.moved$variable)] <- "Truth"
+m.moved$source[grep('error', m.moved$variable)] <- "Error"
+table(m.moved$source)
+motion_est_error <- subset(m.moved, source=="Error")
+motion_ests <- subset(m.moved, source!="Error")
+motion_ests$variable <- NULL
+motion.check <- dcast(motion_ests, ... ~ source)
+settings.check <- dcast(motion_ests, ... ~ source + setting)
+
+```
+
+
+## How Do the different settings look for each method?
+```{r}
+ggplot(subset(settings.check, method=="3dSHORE"), aes(x=Estimated_Rigid, y=Estimated_Affine, color=scheme)) +
+  geom_point() +
+  facet_grid(motion.type ~ axis) +
+  geom_abline()
+
+ggplot(subset(settings.check, method=="eddy"), aes(x=Estimated_Linear, y=Estimated_Quadratic, color=scheme)) +
+  geom_point() +
+  facet_grid(motion.type ~ axis) +
+  geom_abline()
+```
+
+
+```{r}
+actually.moved <- subset(motion.check, was_moved)
+
+ggplot(actually.moved, aes(x=Truth, y=Estimated, color=method)) + 
+  geom_point(alpha=0.2, shape=20) + 
+  geom_abline(intercept=0, slope=1) +
+  facet_grid(motion.type~ axis) +
+  ggtitle("Estimated Motion vs. Ground Truth Motion")
+
+
+```
+
+
+## Compare absolute errors between the methods 
+
+```{r}
+library(viridis)
+library(ggplot2)
+library(cowplot)
+library(extrafont)
+
+loadfonts()
+theme_set(theme_cowplot())
+# Embed the fonts
+
+comparable <- subset(motion_est_error, scheme %in% c('HCP', 'ABCD'))
+
+
+ggplot(comparable, aes(x=scheme, y=value, fill=method, color=motion.type)) + 
+  geom_boxplot(alpha=0.6)
+
+#plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```
+
+
+
+```{r}
+comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
+
+ss10 <- ggplot(comparable, aes(x=error, fill=scheme)) + 
+  geom_density(alpha=0.6, position="identity") +
+  facet_grid(.~motion.type, scales = "free_y") 
+# ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=scheme)) + 
+#   geom_density(alpha=0.6, position="identity") +
+#   facet_grid(.~motion.type, scales = "free_y") +
+#   theme_cowplot(12)
+
+#plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```

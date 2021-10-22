@@ -1,0 +1,126 @@
+---
+title: "Motion Estimation"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Estimating known motion
+
+```{r cars}
+library(reshape2)
+sl.motion <- read.csv("lowmotion_simulation_results.csv", header=TRUE, stringsAsFactors = FALSE)
+eddy.motion <- read.csv("eddy_motion_ests_volnum_home.csv", header=TRUE, stringsAsFactors = FALSE)
+
+sl.motion$method <- "SHORELine"
+eddy.motion$method <- "eddy"
+sl.motion$eddy_stdevs <- 0
+eddy.motion$hmc_r2 <- 0
+eddy.motion$hmc_xcorr <- 0
+
+motion <- rbind(sl.motion, eddy.motion)
+rm(eddy.motion, sl.motion)
+motion$was.moved <- !with(motion, 
+  (true_trans_z == 0) &
+  (true_trans_y == 0) &
+  (true_trans_z == 0) &
+  (true_rot_x == 0) &
+  (true_rot_y == 0) & 
+  (true_rot_z == 0))
+
+table(motion$was.moved)
+
+# Get only the columns for the motion analysis
+moved <- motion[, c("original_file", "bval", "grad_x", "grad_y", "grad_z",
+                    "simnum", "scheme", "method", "percent", "was.moved",
+                    "trans_x", "trans_y", "trans_z", "volnum",
+                    "true_trans_x", "true_trans_y", "true_trans_z",
+                    "rot_x", "rot_y", "rot_z",
+                    "true_rot_x", "true_rot_y", "true_rot_z"
+                    )]
+
+m.moved <- melt(moved, 
+    measure.vars = c("trans_x", "trans_y", "trans_z",
+                     "rot_x", "rot_y", "rot_z",
+                     "true_trans_x", "true_trans_y", "true_trans_z",
+                     "true_rot_x", "true_rot_y", "true_rot_z"))
+
+m.moved$motion.type <- 'Translation'
+m.moved$motion.type[grep('rot_', m.moved$variable)] <- 'Rotation'
+table(m.moved$motion.type)
+m.moved$axis <- gsub(".*_([xyz])$", '\\1', m.moved$variable)
+m.moved$source <- "Estimated"
+m.moved$source[grep('true', m.moved$variable)] <- "Truth"
+table(m.moved$source)
+m <- m.moved[,c("original_file", "bval",
+                "simnum", "scheme", "method", "percent", "was.moved", "volnum",
+                "value", "source", "axis", "motion.type")]
+motion.check <- dcast(m, ... ~ source)
+```
+
+
+
+```{r}
+library(ggplot2)
+actually.moved <- subset(motion.check, was.moved)
+
+ggplot(actually.moved, aes(x=Truth, y=Estimated, color=method, shape=as.factor(percent))) + 
+  geom_point(alpha=0.1) + 
+  geom_abline(intercept=0, slope=1) + 
+#  xlim(-3,3) + ylim(-3,3) +
+  facet_grid(motion.type~ axis) +
+  ggtitle("Estimated Motion vs. Ground Truth Motion")
+
+
+```
+
+
+## Compare absolute errors between the methods 
+
+```{r}
+library(viridis)
+library(ggplot2)
+library(cowplot)
+library(extrafont)
+
+loadfonts()
+theme_set(theme_cowplot())
+# Embed the fonts
+
+actually.moved$error <- with(actually.moved, Truth - Estimated)
+comparable <- subset(actually.moved, scheme %in% c('HCP', 'ABCD'))
+
+ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=method)) + 
+  geom_histogram(alpha=0.6, position="identity") +
+  facet_grid(scheme~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=method)) + 
+  geom_histogram(alpha=0.6, position="identity") +
+  facet_grid(scheme~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```
+
+```{r}
+comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
+
+ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=scheme)) + 
+  geom_density(alpha=0.6, position="identity") +
+  facet_grid(.~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=scheme)) + 
+  geom_density(alpha=0.6, position="identity") +
+  facet_grid(.~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```
