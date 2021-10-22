@@ -87,48 +87,32 @@ settings.check <- dcast(motion_ests, ... ~ source + setting)
 
 ```{r cars}
 
+
 truth <- moved %>%
   select(-matches('grad')) %>%
+  select(-starts_with('error_')) %>%
   gather('truth', 'true_values', matches('true')) %>%
   select(-matches('_(x|y|z)'))
   
 estimates <- moved %>%
   gather('estimated', 'estimated_values', matches('_(x|y|z)'), -matches('true')) %>%
   select(-matches('true')) %>%
+  select(-starts_with('error_')) %>%
   filter(!str_detect(estimated, 'grad'))
-
-m.moved <- moved %>%
-  rowid_to_column() %>%
-  melt( 
-    measure.vars = c("trans_x", "trans_y", "trans_z",
-                     "rot_x", "rot_y", "rot_z",
-                     "true_trans_x", "true_trans_y", "true_trans_z",
-                     "true_rot_x", "true_rot_y", "true_rot_z")
-    )
-
-m.moved$motion.type <- 'Translation'
-m.moved$motion.type[grep('rot_', m.moved$variable)] <- 'Rotation'
-table(m.moved$motion.type)
-m.moved$axis <- gsub(".*_([xyz])$", '\\1', m.moved$variable)
-m.moved$source <- "Estimated"
-m.moved$source[grep('true', m.moved$variable)] <- "Truth"
-table(m.moved$source)
-m <- m.moved[,c("rowid", "original_file", "bval",
-                "simnum", "scheme", "method", "percent", "was.moved", "volnum",
-                "value", "source", "axis", "motion.type")]
-motion.check <- spread(m, source, value)
 ```
 
 
 
 ```{r}
-actually.moved <- subset(motion.check, was.moved)
+actually.moved <- subset(motion.check, was_moved)
 
 estimates %>%
   cbind(select(truth, matches('tru'))) %>%
-  filter(was.moved) %>%
-  extract(estimated, c("motion.type", "axis"), "([[:alnum:]]+)_([[:alnum:]]+)") %>%
-  ggplot(., aes(x=true_values, y=estimated_values, color=method, shape=as.factor(percent))) + 
+  filter(was_moved) 
+
+
+%>%
+  ggplot(., aes(x=true_values, y=estimated_values, color=method, shape=as.factor(percent_motion))) + 
   geom_point(alpha=0.1) + 
   geom_abline(intercept=0, slope=1) + 
 #  xlim(-3,3) + ylim(-3,3) +
