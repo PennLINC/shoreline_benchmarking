@@ -2,18 +2,25 @@
 title: "Motion Estimation"
 output: html_document
 ---
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(viridis)
+library(ggplot2)
+library(cowplot)
+library(extrafont)
+library(reshape2)
+library(ggplot2)
+library(here)
+library(emmeans)
+library(DT)
+
+library(tidyverse)
+loadfonts()
 ```
 
 ## Estimating known motion
 
 ```{r read_results}
-library(ggplot2)
-library(reshape2)
-
-
 motion_df <- read.csv("data/motion_benchmark.csv")
 qc_df <- read.csv('data/qc_benchmark.csv')
 
@@ -73,6 +80,289 @@ motion.check <- dcast(motion_ests, ... ~ source)
 settings.check <- dcast(motion_ests, ... ~ source + setting)
 
 ```
+
+
+
+## Estimating known motion
+
+```{r cars}
+
+truth <- moved %>%
+  select(-matches('grad')) %>%
+  gather('truth', 'true_values', matches('true')) %>%
+  select(-matches('_(x|y|z)'))
+  
+estimates <- moved %>%
+  gather('estimated', 'estimated_values', matches('_(x|y|z)'), -matches('true')) %>%
+  select(-matches('true')) %>%
+  filter(!str_detect(estimated, 'grad'))
+
+m.moved <- moved %>%
+  rowid_to_column() %>%
+  melt( 
+    measure.vars = c("trans_x", "trans_y", "trans_z",
+                     "rot_x", "rot_y", "rot_z",
+                     "true_trans_x", "true_trans_y", "true_trans_z",
+                     "true_rot_x", "true_rot_y", "true_rot_z")
+    )
+
+m.moved$motion.type <- 'Translation'
+m.moved$motion.type[grep('rot_', m.moved$variable)] <- 'Rotation'
+table(m.moved$motion.type)
+m.moved$axis <- gsub(".*_([xyz])$", '\\1', m.moved$variable)
+m.moved$source <- "Estimated"
+m.moved$source[grep('true', m.moved$variable)] <- "Truth"
+table(m.moved$source)
+m <- m.moved[,c("rowid", "original_file", "bval",
+                "simnum", "scheme", "method", "percent", "was.moved", "volnum",
+                "value", "source", "axis", "motion.type")]
+motion.check <- spread(m, source, value)
+```
+
+
+
+```{r}
+actually.moved <- subset(motion.check, was.moved)
+
+estimates %>%
+  cbind(select(truth, matches('tru'))) %>%
+  filter(was.moved) %>%
+  extract(estimated, c("motion.type", "axis"), "([[:alnum:]]+)_([[:alnum:]]+)") %>%
+  ggplot(., aes(x=true_values, y=estimated_values, color=method, shape=as.factor(percent))) + 
+  geom_point(alpha=0.1) + 
+  geom_abline(intercept=0, slope=1) + 
+#  xlim(-3,3) + ylim(-3,3) +
+  facet_grid(motion.type~ axis) +
+  ggtitle("Estimated Motion vs. Ground Truth Motion") +
+  theme_minimal()
+
+
+```
+
+
+## Compare absolute errors between the methods
+
+NOTE: We now have 15 and 30% motion. 50% is being run now.
+
+```{r}
+theme_set(theme_cowplot())
+# Embed the fonts
+
+actually.moved$error <- with(actually.moved, Truth - Estimated)
+comparable <- subset(actually.moved, scheme %in% c('HCP', 'ABCD'))
+
+ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=method)) + 
+  geom_histogram(alpha=0.6, position="identity") +
+  facet_grid(scheme~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=method)) + 
+  geom_histogram(alpha=0.6, position="identity") +
+  facet_grid(scheme~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```
+
+```{r}
+comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
+
+ss10 <- ggplot(subset(comparable, percent==10), aes(x=error, fill=scheme)) + 
+  geom_density(alpha=0.6, position="identity") +
+  facet_grid(.~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=scheme)) + 
+  geom_density(alpha=0.6, position="identity") +
+  facet_grid(.~motion.type, scales = "free_y") +
+  theme_cowplot(12)
+
+plot_grid(ss10, ss25, labels = c('A', 'B'), label_size = 12)
+  
+
+```
+
+# Stat Tests
+
+Here we test difference of variance between the absolute error of each parameter setting.
+
+First, calculate absolute error for each estimation, then group by the parameters and nest this dataframe, giving one row of parameters with a nested df of absolute errors using these settings:
+```{r}
+grouped_absolute_err <- motion.check %>% 
+  mutate(error = Estimated - Truth) %>% 
+  mutate(abs_error =  abs(error)) %>%
+  group_nest(scheme, method, percent, was.moved, motion.type) %>%
+  crossing(.,.)
+
+grouped_absolute_err <- grouped_absolute_err %>%
+  filter(
+    #scheme == scheme1 &
+      method != method1 &
+      percent == percent1 &
+      was.moved == TRUE &
+      was.moved1 == TRUE &
+      motion.type == motion.type1
+    ) %>%
+  arrange_at(vars(-data, -data1))
+
+grouped_absolute_err
+```
+
+Then, loop through each line of the absolute errors. For each line, compare the data using a nonparametric permutation T-test:
+```{r, warning=FALSE, message=FALSE, cache=TRUE}
+tests <- grouped_absolute_err %>%
+  mutate(statistic = map2_dbl(.x = data, .y = data1, .f = function(x,y){
+    DAAG::twotPermutation(x$abs_error, y$abs_error, nsim = 5000, plotit = FALSE)
+    })
+  )
+
+```
+
+We want to test for Eddy vs Shoreline in ABCD & HCP
+
+## Permutation test results
+```{r}
+tests %>%
+  select(-data, -data1) %>%
+  knitr::kable()
+```
+
+```{r}
+
+```
+
+
+## T-test Results
+
+```{r}
+tests %>%
+  filter_at(vars(contains("scheme")), any_vars(str_detect(., "HCP|ABCD"))) %>%
+  filter_at(vars(contains("method")), any_vars(str_detect(., "eddy|SHORELine"))) %>%
+  filter(was.moved == TRUE & was.moved1 == TRUE) %>%
+  #filter(percent == percent1) %>%
+  #filter(motion.type == motion.type1) %>%
+  filter(scheme == scheme1) %>%
+  filter(method != method1) %>%
+  unite("scheme", contains("scheme"), sep = "_vs_") %>%
+  unite("method", contains("_method"), sep = "_vs_") %>%
+  mutate(n = rep(c(1,2), each = 2, times = nrow(.)/4)) %>%
+  filter(n == 2) %>%
+  select(-n) %>%
+  set_names(~str_replace(., "x_", "")) %>%
+  mutate(sig = p.value < 0.05/nrow(.)) %>% 
+  select(p.value, sig, scheme:motion.type) %>%
+  knitr::kable()
+```
+
+## Two Way Anova
+
+We can use a traditional multiple anova between the groups:
+
+```{r}
+grouped_absolute_err %>%
+  #filter(str_detect(scheme, "HCP|ABCD")) %>%
+  #filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  group_by(percent, was.moved, motion.type) %>%
+  group_modify( ~ {
+    aov(abs_error ~ scheme + method, data = .x) %>% 
+      broom::glance()
+    }, keep = TRUE) %>%
+  mutate(sig = p.value < 0.05) %>%
+  knitr::kable()
+```
+
+We can also get Tukey's adjusted HSD for multiple comparisons:
+
+```{r}
+grouped_absolute_err %>%
+  #filter(str_detect(scheme, "HCP|ABCD")) %>%
+  #filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  group_by(percent, was.moved, motion.type) %>%
+  group_modify( ~ {
+    aov(abs_error ~ scheme * method, data = .x) %>% 
+      TukeyHSD() %>%
+      broom::tidy()
+    }, keep = TRUE) %>%
+  mutate(sig = adj.p.value < 0.05) %>%
+  knitr::kable()
+```
+
+We can visualise each of the groups as well:
+
+```{r}
+means_moved <- grouped_absolute_err %>%
+  filter(str_detect(scheme, "HCP|ABCD")) %>%
+  filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  group_by(percent, was.moved, motion.type) %>%
+  group_modify( ~ {
+    lm(abs_error ~ scheme * method, data = .x) %>% 
+      emmeans(c("scheme", "method")) %>%
+      broom::tidy()
+    }, 
+    keep = TRUE) %>%
+  mutate(comparison = str_c(scheme, method, sep = ":")) %>%
+  filter(was.moved == TRUE) %>%
+  ggplot(aes(x=scheme, y=estimate)) +
+    geom_col(aes(fill=method), position="dodge") +
+    labs(y="marginal means") +
+    facet_grid(rows = vars(percent), cols = vars(motion.type)) +
+    theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm"), legend.position = "bottom") 
+  
+means_unmoved <- grouped_absolute_err %>%
+  filter(str_detect(scheme, "HCP|ABCD")) %>%
+  filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  group_by(percent, was.moved, motion.type) %>%
+  group_modify( ~ {
+    lm(abs_error ~ scheme * method, data = .x) %>% 
+      emmeans(., ~ scheme | method) %>%
+      broom::tidy()
+    }, 
+    keep = TRUE) %>%
+  mutate(comparison = str_c(scheme, method, sep = ":")) %>%
+  filter(was.moved == FALSE) %>%
+  ggplot(aes(x=scheme, y=estimate)) +
+    geom_col(aes(fill=method), position="dodge") +
+    labs(y="marginal means") +
+    facet_grid(rows = vars(percent), cols = vars(motion.type)) +
+    theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm"), legend.position = "bottom")
+
+plot_grid(means_moved, means_unmoved, labels = c('Moved', 'Not Moved'), label_size = 12)
+```
+
+To show the differences between distributions of error, we can use violin plots like so:
+
+```{r}
+violins_moved <- grouped_absolute_err %>%
+  #filter(str_detect(scheme, "HCP|ABCD")) %>%
+  #filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  filter(was.moved == TRUE) %>%
+  ggplot(aes(x=scheme, y=abs_error)) +
+    geom_violin(aes(fill=method), position="dodge", draw_quantiles = TRUE) +
+    facet_grid(rows = vars(percent), cols = vars(motion.type)) +
+    theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm"), legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))
+
+violins_unmoved <- grouped_absolute_err %>%
+  #filter(str_detect(scheme, "HCP|ABCD")) %>%
+  #filter(str_detect(method, "eddy|SHORELine")) %>%
+  unnest(data) %>%
+  filter(was.moved == FALSE) %>%
+  ggplot(aes(x=scheme, y=abs_error)) +
+    geom_violin(aes(fill=method), position="dodge", draw_quantiles = TRUE) +
+    facet_grid(rows = vars(percent), cols = vars(motion.type)) +
+    theme(plot.margin = unit(c(1,0.5,0.5,0.5), "cm"), legend.position = "bottom",
+          axis.text.x = element_text(angle = 90))
+
+plot_grid(violins_moved, violins_unmoved, labels = c('Moved', 'Not Moved'), label_size = 12)
+```
+
 
 
 ## How Do the different settings look for each method?
