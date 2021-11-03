@@ -13,6 +13,7 @@ library(ggplot2)
 library(here)
 library(emmeans)
 library(DT)
+library(patchwork)
 
 library(tidyverse)
 loadfonts()
@@ -102,38 +103,275 @@ estimates <- moved %>%
 
 
 ```{r estimated vs real motion plot}
+
 # join the estimates and the true values
-estimates %>%
+estimates2 <- estimates %>%
   bind_cols(select(truth, truth, true_values)) %>%
   # use only rows where there was actual perturbation
   filter(was_moved) %>%
   # get a column for the axis
   separate(estimated, into=c("motion_type", "axis"), sep="_") %>%
-  
-  # start the ggplot
-  ggplot(
-    aes(x=true_values, 
-        y=estimated_values, 
-        color=method,
-        # we may not need percent motion yet
-        shape=as.factor(percent_motion)
-        )
-    ) +
-  geom_point(alpha=0.1) + 
-  geom_abline(intercept=0, slope=1) + 
-  facet_grid(motion_type~ axis) +
-  ggtitle("Estimated Motion vs. Ground Truth Motion") +
-  theme_minimal()
+  mutate(percent_motion = as.factor(percent_motion))
 
+# get the percentages
+percents <- unique(estimates2$percent_motion) %>%
+  sort()
+settings <- unique(estimates2$setting)
+
+# create a list for these
+scatterplots <- vector("list", length = length(percents))
+
+# start the ggplot
+for(x in 1:length(percents)){
+  
+  estimates2 %>%
+    filter(percent_motion == percents[x]) %>%
+    filter(setting %in% c("Quadratic", "Affine")) %>%
+    mutate(method = str_c(method, " (", setting, ")")) %>%
+    ggplot(
+      aes(x=true_values, 
+          y=estimated_values, 
+          color=method
+          )
+      ) +
+    geom_point(shape=19, size=0.0001, alpha = 0.2) + 
+    geom_abline(intercept=0, slope=1) + 
+    facet_grid(~motion_type, scales = "free") +
+    theme_minimal() +
+    ggtitle(#"Estimated Motion vs. Ground Truth Motion",
+            paste0(percents[x], "% Motion")) +
+    theme(legend.position = "bottom") +
+    ylim(-10, 10) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
+    theme_minimal() -> scatterplots[[x]]
+
+}
+
+
+p <- wrap_plots(scatterplots, ncol = 1) + 
+  guide_area() + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(
+  title = 'Comparing Estimated vs. True Motion of 3dSHORE & eddy',
+  caption = 'Some more description can be put here'
+)
+```
+
+```{r estimated vs real with scheme}
+# get the percentages
+percents <- unique(estimates2$percent_motion) %>%
+  sort()
+settings <- unique(estimates2$setting)
+
+# create a list for these
+scatterplots_abcd <- vector("list", length = length(percents))
+
+# start the ggplot
+for(x in 1:length(percents)){
+  
+  estimates2 %>%
+    filter(percent_motion == percents[x]) %>%
+    filter(setting %in% c("Quadratic", "Affine")) %>%
+    filter(scheme == "ABCD") %>%
+    mutate(method = str_c(method, " (", setting, ")")) %>%
+    ggplot(
+      aes(x=true_values, 
+          y=estimated_values, 
+          color=method
+          )
+      ) +
+    geom_point(shape=19, size=0.0001, alpha = 0.4) + 
+    geom_abline(intercept=0, slope=1) + 
+    facet_grid(~motion_type, scales = "free") +
+    theme_minimal() +
+    ggtitle(#"Estimated Motion vs. Ground Truth Motion",
+            paste0(percents[x], "% Motion")) +
+    theme(legend.position = "bottom") +
+    ylim(-10, 10) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
+    theme_minimal() -> scatterplots_abcd[[x]]
+
+}
+
+# create a list for these
+scatterplots_hcp <- vector("list", length = length(percents))
+
+# start the ggplot
+for(x in 1:length(percents)){
+  
+  estimates2 %>%
+    filter(percent_motion == percents[x]) %>%
+    filter(setting %in% c("Quadratic", "Affine")) %>%
+    filter(scheme == "HCP") %>%
+    mutate(method = str_c(method, " (", setting, ")")) %>%
+    ggplot(
+      aes(x=true_values, 
+          y=estimated_values, 
+          color=method
+          )
+      ) +
+    geom_point(shape=19, size=0.0001, alpha = 0.4) + 
+    geom_abline(intercept=0, slope=1) + 
+    facet_grid(~motion_type, scales = "free") +
+    theme_minimal() +
+    ggtitle(#"Estimated Motion vs. Ground Truth Motion",
+            paste0(percents[x], "% Motion")) +
+    theme(legend.position = "bottom") +
+    ylim(-10, 10) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
+    theme_minimal() -> scatterplots_hcp[[x]]
+
+}
+
+
+
+p_abcd <- wrap_plots(scatterplots_abcd, ncol = 1) + 
+  # guide_area() + 
+  # plot_layout(guides = 'collect') +
+  plot_annotation(
+  title = 'ABCD Scheme')#,
+#   caption = 'Some more description can be put here'
+# )
+
+p_hcp <- wrap_plots(scatterplots_hcp, ncol = 1) + 
+  # guide_area() + 
+  # plot_layout(guides = 'collect') +
+  plot_annotation(
+  title = 'HCP Scheme')#   caption = 'Some more description can be put here'
+# )
+
+wrap_plots(p_abcd, p_hcp, ncol = 2) +
+  plot_layout(guides = "collect") +
+  plot_annotation(
+  title = 'True vs Estimated Motion by Scheme',
+  subtitle = "Left: ABCD\nRight: HCP")
 
 ```
 
 
-## Compare absolute errors between the methods
+## Framewise Displacement
 
-NOTE: We now have 15 and 30% motion. 50% is being run now.
+Let's calculate FD and visualise:
 
 ```{r}
+power_fd <- function(data, radius=50, rotation_vars, translation_vars){
+  
+  stopifnot(
+    is.list(rotation_vars),
+    is.list(translation_vars)
+  )
+  
+  df <- data
+
+  # 1) multiply rotation columns by pi & / 180
+  rotation_cols <- c("true_rot_x", "true_rot_y", "true_rot_z")
+  back2radians <- data[, rotation_cols] * pi / 180.0
+  # 
+  back2radians2 <- data %>%
+    select(!!!rotation_vars) %>%
+    mutate(across(everything(), ~ .x * pi / 180.0))
+  
+  # 2) create a matrix of just translation cols and radians
+  translation_cols=c("true_trans_x", "true_trans_y", "true_trans_z")
+  motion_matrix <- cbind(df[, translation_cols], back2radians)
+  motion_matrix2 <- data %>%
+    select(!!!translation_vars) %>%
+    bind_cols(back2radians)
+  # 
+  tdiff <- head(motion_matrix, -1) - tail(motion_matrix, -1)
+  tdiff[, rotation_cols] <- tdiff[,c("true_rot_x", "true_rot_y", "true_rot_z")] * radius
+  
+  tdiff2 <- head(motion_matrix2, -1) - tail(motion_matrix2, -1) 
+  
+  times_rad <- function(x){
+    
+    return(x * radius)
+  }
+  
+  tdiff2 <- tdiff2 %>%
+    mutate(across(contains("rot"), times_rad))
+
+  fd <- abs(tdiff)
+  fd <- c( NA, rowSums(abs(tdiff)))
+  # # Set the first volume to NA
+  fd[df[,'volnum']==0] <- NA
+  # return(fd)
+  
+  fd2 <- tdiff2 %>%
+    mutate(across(everything(), ~ .x %>% abs())) %>%
+    transmute(fd = select(., everything()) %>% rowSums()) %>%
+    rbind(NA, .) %>%
+    pull(fd) %>%
+  return()
+}
+
+fd_col_actual <- power_fd(moved, 50, vars(true_rot_x, true_rot_y, true_rot_z), vars(true_trans_x, true_trans_y, true_trans_z))
+
+fd_col_est <- power_fd(moved, 50, vars(rot_x, rot_y, rot_z), vars(trans_x, trans_y, trans_z))
+
+motion_wfd <- moved %>%
+  bind_cols(FD_actual = fd_col_actual, FD_est = fd_col_est) %>%
+  mutate(FD_error = FD_est - FD_actual)
+
+p1 <- motion_wfd %>%
+  filter(was_moved == TRUE) %>%
+  filter(scheme %in% c("ABCD", "HCP")) %>%
+  mutate(method = str_c(method, " (", setting, ")")) %>%
+  ggplot(aes(
+    y = FD,
+    x = scheme,
+    color = method)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(0.9))
+  
+percents <- unique(motion_wfd$percent_motion) %>%
+  sort()
+
+fdplots <- vector("list", length = length(percents))
+
+# start the ggplot
+for(x in 1:length(percents)){
+  
+  motion_wfd %>%
+    filter(percent_motion == percents[x]) %>%
+    filter(setting %in% c("Quadratic", "Affine")) %>%
+    filter(!FD_actual == 0) %>%
+    mutate(method = str_c(method, " (", setting, ")")) %>%
+    ggplot(
+      aes(x=FD_actual, 
+          y=FD_est,
+          color=method
+          )
+      ) +
+    geom_point(alpha = 0.2, size=0.3) + #shape=19, size=0.0001, alpha = 0.2) +
+    geom_abline(intercept=0, slope=1) + 
+    # facet_grid(~motion_type, scales = "free") +
+    theme_minimal() +
+    ggtitle(#"Estimated Motion vs. Ground Truth Motion",
+            paste0(percents[x], "% Motion")) +
+    theme(legend.position = "bottom") +
+    ylim(0, 40) +
+    xlim(0, 40) +
+    guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
+    theme_minimal() -> fdplots[[x]]
+
+}
+
+
+p1 <- wrap_plots(fdplots, ncol = 1) + 
+  guide_area() + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(
+  title = 'Comparing Estimated vs. True Framewise Displacement\nof 3dSHORE & eddy',
+  # subtitle = 'Boxplots show distribution of data',
+  caption = 'Some more description can be put here'
+)
+```
+
+## Compare absolute errors between the methods
+
+With patchwork:
+
+```{r absolute error histogram}
 actually.moved <- subset(motion.check, was_moved)
 
 theme_set(theme_cowplot())
@@ -143,51 +381,53 @@ actually.moved$error <- with(actually.moved, Truth - Estimated)
 comparable <- subset(actually.moved, scheme %in% c('HCP', 'ABCD'))
 
 # get the different percentages
-percents <- unique(comparable$percent_motion)
+percents <- unique(comparable$percent_motion) %>%
+  sort()
 
 # create a list for these
-absolute_error_hists <- vector("list", length = length(percents))
+absolute_error_box <- vector("list", length = length(percents))
 
 # for each of the percentages make a plot
 for(x in 1:length(percents)){
   
-  ptitle <- paste0("Absolute Error of Motion Correction for ",
-                  percents[x], "% Motion")
+  ptitle <- paste0(percents[x], "% Motion")
+  
   pl <- comparable %>%
-    # do the percent motion filter here
     filter(percent_motion==percents[x]) %>%
+    filter(setting %in% c("Affine", "Quadratic")) %>%
+    mutate(method = str_c(method, " (", setting, ")")) %>%
+    # mutate(error = abs(error)) %>%
+    # filter out the outlier who would normally be removed
+    # filter(error < 20) %>%
     
     # start the ggplot
-    ggplot(aes(x=error, fill=method)) + 
-    geom_histogram(alpha=0.6, position="identity") +
-    facet_grid(scheme~motion.type, scales = "free_y") +
-    ggtitle(ptitle)
-    theme_cowplot(12)
+    ggplot(aes(x=scheme, y=error, fill=method)) + 
+    geom_boxplot(width=0.9, position=position_dodge(1), outlier.alpha = 0.5, outlier.size = 0.5) +
+    geom_hline(yintercept = 0) +
+    facet_grid(~motion.type, scales = "free_y") +
+    ylim(-8, 8) +
+    coord_flip() +
+    theme(legend.position = "bottom") +
+    ggtitle(ptitle) +
+    # theme_bw() +
+    scale_fill_manual(values=c("#f0f0f0", "#636363"))
+
   
-  absolute_error_hists[[x]] <- pl
+  absolute_error_box[[x]] <- pl
 }
 
-### NOT NEEDED
-# comparable %>%
-#   # do the percent motion filter here
-#   filter(percent_motion==15) %>%
-#   
-#   # start the ggplot
-#   ggplot(aes(x=error, fill=method)) + 
-#   geom_histogram(alpha=0.6, position="identity") +
-#   facet_grid(scheme~motion.type, scales = "free_y") +
-#   theme_cowplot(12) -> ss15
-# 
-# ss25 <- ggplot(subset(comparable, percent==25), aes(x=error, fill=method)) + 
-#   geom_histogram(alpha=0.6, position="identity") +
-#   facet_grid(scheme~motion.type, scales = "free_y") +
-#   theme_cowplot(12)
-
-plot_grid(plotlist = absolute_error_hists, labels = LETTERS[1:length(absolute_error_hists)], label_size = 12)
+p2 <- wrap_plots(absolute_error_box, ncol = 1) + 
+  guide_area() + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(
+  title = 'Error of Motion Correction for 3dSHORE & eddy',
+  subtitle = 'Subset by % Motion',
+  caption = 'Some more description can be put here'
+)
 
 ```
 
-```{r}
+```{r absolute error density plot, include=FALSE, eval=FALSE}
 comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
 
 # create a list for these
@@ -222,12 +462,11 @@ plot_grid(plotlist = absolute_error_dens, labels = LETTERS[1:length(absolute_err
 Here we test difference of variance between the absolute error of each parameter setting.
 
 First, calculate absolute error for each estimation, then group by the parameters and nest this dataframe, giving one row of parameters with a nested df of absolute errors using these settings:
-```{r}
+```{rinclude=FALSE, eval=FALSE}
 grouped_absolute_err <- motion.check %>% 
   mutate(error = Estimated - Truth) %>% 
   mutate(abs_error =  abs(error)) %>%
-  group_nest(scheme, method, percent, was.moved, motion.type) %>%
-  crossing(.,.)
+  group_nest(scheme, method, percent_motion, was_moved, motion.type)
 
 grouped_absolute_err <- grouped_absolute_err %>%
   filter(
@@ -244,7 +483,7 @@ grouped_absolute_err
 ```
 
 Then, loop through each line of the absolute errors. For each line, compare the data using a nonparametric permutation T-test:
-```{r, warning=FALSE, message=FALSE, cache=TRUE}
+```{r, warning=FALSE, message=FALSE, cache=TRUE, include=FALSE, eval=FALSE}
 tests <- grouped_absolute_err %>%
   mutate(statistic = map2_dbl(.x = data, .y = data1, .f = function(x,y){
     DAAG::twotPermutation(x$abs_error, y$abs_error, nsim = 5000, plotit = FALSE)
@@ -256,20 +495,16 @@ tests <- grouped_absolute_err %>%
 We want to test for Eddy vs Shoreline in ABCD & HCP
 
 ## Permutation test results
-```{r}
+```{r, include=FALSE, eval=FALSE}
 tests %>%
   select(-data, -data1) %>%
   knitr::kable()
 ```
 
-```{r}
-
-```
-
 
 ## T-test Results
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 tests %>%
   filter_at(vars(contains("scheme")), any_vars(str_detect(., "HCP|ABCD"))) %>%
   filter_at(vars(contains("method")), any_vars(str_detect(., "eddy|SHORELine"))) %>%
@@ -293,7 +528,7 @@ tests %>%
 
 We can use a traditional multiple anova between the groups:
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 grouped_absolute_err %>%
   #filter(str_detect(scheme, "HCP|ABCD")) %>%
   #filter(str_detect(method, "eddy|SHORELine")) %>%
@@ -309,7 +544,7 @@ grouped_absolute_err %>%
 
 We can also get Tukey's adjusted HSD for multiple comparisons:
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 grouped_absolute_err %>%
   #filter(str_detect(scheme, "HCP|ABCD")) %>%
   #filter(str_detect(method, "eddy|SHORELine")) %>%
@@ -326,7 +561,7 @@ grouped_absolute_err %>%
 
 We can visualise each of the groups as well:
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 means_moved <- grouped_absolute_err %>%
   filter(str_detect(scheme, "HCP|ABCD")) %>%
   filter(str_detect(method, "eddy|SHORELine")) %>%
@@ -370,7 +605,7 @@ plot_grid(means_moved, means_unmoved, labels = c('Moved', 'Not Moved'), label_si
 
 To show the differences between distributions of error, we can use violin plots like so:
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 violins_moved <- grouped_absolute_err %>%
   #filter(str_detect(scheme, "HCP|ABCD")) %>%
   #filter(str_detect(method, "eddy|SHORELine")) %>%
@@ -399,7 +634,7 @@ plot_grid(violins_moved, violins_unmoved, labels = c('Moved', 'Not Moved'), labe
 
 
 ## How Do the different settings look for each method?
-```{r}
+```{r, include=FALSE, eval=FALSE}
 ggplot(subset(settings.check, method=="3dSHORE"), aes(x=Estimated_Rigid, y=Estimated_Affine, color=scheme)) +
   geom_point() +
   facet_grid(motion.type ~ axis) +
@@ -412,7 +647,7 @@ ggplot(subset(settings.check, method=="eddy"), aes(x=Estimated_Linear, y=Estimat
 ```
 
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 actually.moved <- subset(motion.check, was_moved)
 
 ggplot(subset(actually.moved, percent_motion==15),
@@ -434,7 +669,7 @@ ggplot(subset(actually.moved, percent_motion==33),
 
 ## Compare absolute errors between the methods 
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 library(viridis)
 library(ggplot2)
 library(cowplot)
@@ -457,7 +692,7 @@ ggplot(comparable, aes(x=scheme, y=value, fill=method, color=motion.type)) +
 
 
 
-```{r}
+```{r, include=FALSE, eval=FALSE}
 comparable <- subset(actually.moved, scheme %in% c('DSIQ5', 'HASC55'))
 
 ss10 <- ggplot(comparable, aes(x=error, fill=scheme)) + 
