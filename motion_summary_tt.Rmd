@@ -58,7 +58,8 @@ motion_columns <- c("bval", "grad_x", "grad_y", "grad_z",
                     "true_trans_x", "true_trans_y", "true_trans_z", "true_rot_x", "true_rot_y", "true_rot_z",
                     "trans_x", "trans_y", "trans_z", "rot_x", "rot_y", "rot_z", "volnum"
                     )
-moved <- motion_df[, motion_columns]
+moved <- motion_df[, motion_columns] %>%
+  bind_cols(select(motion_df, matches("DWI")))
 
 
 m.moved <- melt(moved,
@@ -134,7 +135,7 @@ for(x in 1:length(percents)){
           color=method
           )
       ) +
-    geom_point(shape=19, size=0.0001, alpha = 0.2) + 
+    geom_point(shape=19, size=0.5, alpha = 0.2) + 
     geom_abline(intercept=0, slope=1) + 
     facet_grid(~motion_type, scales = "free") +
     theme_minimal() +
@@ -143,7 +144,8 @@ for(x in 1:length(percents)){
     theme(legend.position = "bottom") +
     ylim(-10, 10) +
     guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
-    theme_minimal() -> scatterplots[[x]]
+    theme_minimal() +
+    theme(text = element_text(size=25)) -> scatterplots[[x]]
 
 }
 
@@ -153,8 +155,11 @@ p <- wrap_plots(scatterplots, ncol = 1) +
   plot_layout(guides = 'collect') +
   plot_annotation(
   title = 'Comparing Estimated vs. True Motion of 3dSHORE & eddy',
-  caption = 'Some more description can be put here'
-)
+  caption = 'Some more description can be put here')
+
+p
+
+ggsave("plot_outputs/estimate_v_true_motion.jpg", p, width = 14, height = 20)
 ```
 
 ```{r estimated vs real with scheme}
@@ -180,7 +185,7 @@ for(x in 1:length(percents)){
           color=method
           )
       ) +
-    geom_point(shape=19, size=0.0001, alpha = 0.4) + 
+    geom_point(shape=19, size=0.3, alpha = 0.4) + 
     geom_abline(intercept=0, slope=1) + 
     facet_grid(~motion_type, scales = "free") +
     theme_minimal() +
@@ -189,7 +194,8 @@ for(x in 1:length(percents)){
     theme(legend.position = "bottom") +
     ylim(-10, 10) +
     guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
-    theme_minimal() -> scatterplots_abcd[[x]]
+    theme_minimal() +
+    theme(text = element_text(size=22)) -> scatterplots_abcd[[x]]
 
 }
 
@@ -210,7 +216,7 @@ for(x in 1:length(percents)){
           color=method
           )
       ) +
-    geom_point(shape=19, size=0.0001, alpha = 0.4) + 
+    geom_point(shape=19, size=0.3, alpha = 0.4) + 
     geom_abline(intercept=0, slope=1) + 
     facet_grid(~motion_type, scales = "free") +
     theme_minimal() +
@@ -219,7 +225,8 @@ for(x in 1:length(percents)){
     theme(legend.position = "bottom") +
     ylim(-10, 10) +
     guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
-    theme_minimal() -> scatterplots_hcp[[x]]
+    theme_minimal() +
+    theme(text = element_text(size=22)) -> scatterplots_hcp[[x]]
 
 }
 
@@ -240,12 +247,14 @@ p_hcp <- wrap_plots(scatterplots_hcp, ncol = 1) +
   title = 'HCP Scheme')#   caption = 'Some more description can be put here'
 # )
 
-wrap_plots(p_abcd, p_hcp, ncol = 2) +
+p_scheme <- wrap_plots(p_abcd, p_hcp, ncol = 2) +
+  guide_area() +
   plot_layout(guides = "collect") +
   plot_annotation(
   title = 'True vs Estimated Motion by Scheme',
-  subtitle = "Left: ABCD\nRight: HCP")
+  subtitle = "Left: ABCD\nRight: HCP", theme = theme(text = element_text(size=22)))
 
+ggsave("plot_outputs/estimate_v_true_motion_scheme.jpg", p_scheme, width = 14, height = 20)
 ```
 
 
@@ -356,15 +365,39 @@ for(x in 1:length(percents)){
 
 }
 
+p1 <- motion_wfd %>%
+  # filter(percent_motion == percents[x]) %>%
+  filter(setting %in% c("Quadratic", "Affine")) %>%
+  filter(!FD_actual == 0) %>%
+  mutate(method = str_c(method, " (", setting, ")")) %>%
+  mutate(percent_motion = paste0(percent_motion, "% Motion")) %>%
+  ggplot(
+    aes(x=FD_actual, 
+        y=FD_est,
+        color=method
+        )
+    ) +
+  geom_point(alpha = 0.2, size=0.7) + #shape=19, size=0.0001, alpha = 0.2) +
+  geom_abline(intercept=0, slope=1) + 
+  facet_grid(percent_motion~., scales = "free") +
+  theme_minimal() +
+  ggtitle('Comparing Estimated vs. True Framewise Displacement\nof 3dSHORE & eddy') +
+  theme(legend.position = "bottom") +
+  ylim(0, 40) +
+  xlim(0, 40) +
+  guides(colour = guide_legend(override.aes = list(alpha = 1, size=1))) +
+  theme_minimal() +
+  theme(text = element_text(size=23))
 
-p1 <- wrap_plots(fdplots, ncol = 1) + 
-  guide_area() + 
-  plot_layout(guides = 'collect') +
-  plot_annotation(
-  title = 'Comparing Estimated vs. True Framewise Displacement\nof 3dSHORE & eddy',
-  # subtitle = 'Boxplots show distribution of data',
-  caption = 'Some more description can be put here'
-)
+ggsave("plot_outputs/estimate_v_true_FD.jpg", p1, width = 14, height = 20)
+# p1 <- wrap_plots(fdplots, ncol = 1) + 
+#   guide_area() + 
+#   plot_layout(guides = 'collect') +
+#   plot_annotation(
+#   title = 'Comparing Estimated vs. True Framewise Displacement\nof 3dSHORE & eddy',
+#   # subtitle = 'Boxplots show distribution of data',
+#   caption = 'Some more description can be put here'
+# )
 ```
 
 ## Compare absolute errors between the methods
@@ -425,6 +458,7 @@ p2 <- wrap_plots(absolute_error_box, ncol = 1) +
   caption = 'Some more description can be put here'
 )
 
+ggsave("plot_outputs/motion_correction_error_boxpl.jpg", p2, width = 14, height = 16)
 ```
 
 ```{r absolute error density plot, include=FALSE, eval=FALSE}
@@ -462,7 +496,7 @@ plot_grid(plotlist = absolute_error_dens, labels = LETTERS[1:length(absolute_err
 Here we test difference of variance between the absolute error of each parameter setting.
 
 First, calculate absolute error for each estimation, then group by the parameters and nest this dataframe, giving one row of parameters with a nested df of absolute errors using these settings:
-```{rinclude=FALSE, eval=FALSE}
+```{r include=FALSE, eval=FALSE}
 grouped_absolute_err <- motion.check %>% 
   mutate(error = Estimated - Truth) %>% 
   mutate(abs_error =  abs(error)) %>%
