@@ -1,0 +1,25 @@
+---
+title: "Motion Estimation: Checking QC"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r fwhm}
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+
+qc_df <- read.csv("data/qc_benchmark.csv")
+
+# Residualize the ndc
+resid_df <- qc_df %>% group_by(method, setting, scheme)  
+
+ggplot(fwhm_df, aes(x=fwhm, fill=method)) + geom_histogram() + facet_wrap(~method)
+
+
+```
+
+
